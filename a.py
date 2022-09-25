@@ -18,9 +18,8 @@ def step(x, y, t, dx, dt, f):
     d2[0] = d2[-1] = 0
 
     ans += dt * (d2 + f(x, t))  # FIRST ORDER TIME STEP
-    #ans[0], ans[-1] = 1, 0
-    ans[0] = ans[1]
-    ans[-1] = ans[-2]
+#ans[0], ans[-1] = y[0], y[-1]
+    ans[0], ans[-1] = ans[1], ans[-2]
 
     return ans
 
@@ -30,7 +29,7 @@ def nsteps(x, y, t, dx, dt, f, n):
     for i in range(n):
         ans = step(x, ans, t + i*dt/n, dx, dt/n, f)
     return ans
-def runge_step_time(x, y, t, dx, dt, f, n, maxn=1e4, eps=1e-3):
+def runge_step_time(x, y, t, dx, dt, f, n, maxn=1e+10, eps=1e-3):
     y1 = nsteps(x, y, t, dx, dt, f, n)
     y2 = nsteps(x, y, t, dx, dt, f, n*2)
     while (y1 - y2).max() < eps / 2 and n > 1:
@@ -49,7 +48,7 @@ zero = lambda *args: 0
 
 n, nt = 10**2, 10**9
 x = numpy.linspace(0, 1, n)
-y = (x < 2/3) * (x > 1/3) * 1.0
+y = ((x * 7).round() % 2) * 1.0
 
 dx = 1/n
 dt = 0.5 * dx * dx
@@ -59,16 +58,17 @@ t = 0
 n = 1
 
 plt.ion()
-figure, ax = plt.subplots(figsize=(10, 8))
+figure, ax = plt.subplots(figsize=(16, 9))
 
 line1, = ax.plot(x, y)
 figure.canvas.flush_events()
 figure.canvas.draw()
 figure.canvas.flush_events()
 
-time.sleep(1)
 for i in range(nt):
-    n, a = runge_step_time(x, lst, i*dt, dx, dt, zero, n, eps=1e-6)
+    if not plt.fignum_exists(figure.number):
+        break
+    n, a = runge_step_time(x, lst, i*dt, dx, dt, zero, n, eps=1e-6, maxn=1e6)
     lst = a
     time.sleep(0.01)
     if time.time() - t > 0.03:
