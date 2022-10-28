@@ -24,8 +24,6 @@ def implicit_step(x, y, t, dx, dt, k, q):
     if callable(q): Q = q(y)
     if callable(k): K = k(y)
 
-    # TODO: metod progonki
-
     # Y[i] = y[i] in time t-dt
     # ( (K[i+1]+K[i])/2 * (y[i+1] - y[i]) - (K[i]+K[i-1])/2 * (y[i] - y[i-1]) ) / (dx*dx) + Q = (y[i] - Y[i]) / dt
 
@@ -95,12 +93,12 @@ def runge_rule(x, y, t, dx, dt, k, q, eps, sf):
     y1 = nsteps(x, y + noise, t, dx, dt, k, q, 1, sf)
     y2 = nsteps(x, y, t, dx, dt, k, q, 2, sf)
 
-    while (y1 - y2).max() < eps/2:
+    while (y1 - y2).max() < eps/2 and dt < 1:
         dt *= 2
         y1 = nsteps(x, y + noise, t, dx, dt, k, q, 1, sf)
         y2 = nsteps(x, y, t, dx, dt, k, q, 2, sf)
 
-    while (y1 - y2).max() >= eps or not numpy.isfinite(y2).all():
+    while ((y1 - y2).max() >= eps or not numpy.isfinite(y2).all()) and dt > 0:
         dt /= 2
         y1 = nsteps(x, y + 2*noise, t, dx, dt, k, q, 1, sf)
         y2 = nsteps(x, y, t, dx, dt, k, q, 2, sf)
