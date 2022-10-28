@@ -18,6 +18,7 @@ def exponent(linear_operator, t, u, eps=1e-9):
 
 
 def implicit_step(x, y, t, dx, dt, k, q):
+    y = y.copy()
     Q = q
     K = k
     if callable(q): Q = q(y)
@@ -27,7 +28,34 @@ def implicit_step(x, y, t, dx, dt, k, q):
 
     # Y[i] = y[i] in time t-dt
     # ( (K[i+1]+K[i])/2 * (y[i+1] - y[i]) - (K[i]+K[i-1])/2 * (y[i] - y[i-1]) ) / (dx*dx) + Q = (y[i] - Y[i]) / dt
-    # y[i+1] * (K[i+1]+K[i]) / (2*dx*dx) + y[i] * (-(K[i+1]+2K[i]+K[i-1]) / (2*dx*dx) - 1/dt) ...
+
+    Km1 = numpy.roll(K, 1)
+    Kp1 = numpy.roll(K, -1)
+    n = y.shape[0]
+
+    A = (K + Km1) / 2 / (dx*dx)
+    B = -(Kp1 + 2*K + Km1) / 2 / (dx*dx) - 1/dt
+    C = (Kp1 + K) / 2 / (dx*dx)
+    F = -Q - y / dt
+
+    A[0] = C[0] = F[0] = 0
+    B[0] = 1
+    A[n-1] = C[n-1] = F[n-1] = 0
+    B[n-1] = 1
+    # A[i] y[i-1] + B[i] y[i] + C[i] x[i+1] = F[i]
+    alpha = numpy.ones(n+1) * 1e100
+    beta = numpy.ones(n+1) * 1e100
+    alpha[1] = -C[0] / B[0]
+    beta[1] = F[0] / B[0]
+    for i in range(1, n):
+        den = A[i] * alpha[i] + B[i]
+        alpha[i+1] = -C[i] / den
+        beta[i+1] = (F[i] - A[i] * beta[i]) / den
+    y[n-1] = (F[-1] - A[-1]*beta[-1]) / (B[-1] + A[-1]*alpha[-1])
+    for i in range(n - 2, 0, -1):
+        y[i] = alpha[i+1] * y[i+1] + beta[i+1]
+
+    return y
 
 def step(x, y, t, dx, dt, k, q):
     ''' u'_t = div(k(u) grad u) + q(u) = (k(u) u'_x)'_x'''
@@ -63,23 +91,24 @@ def nsteps(x, y, t, dx, dt, k, q, n, sf):
     return ans
 
 def runge_rule(x, y, t, dx, dt, k, q, eps, sf):
-    y1 = nsteps(x, y, t, dx, dt, k, q, 1, sf)
+    noise = numpy.random.rand(*y.shape) * eps / 2
+    y1 = nsteps(x, y + noise, t, dx, dt, k, q, 1, sf)
     y2 = nsteps(x, y, t, dx, dt, k, q, 2, sf)
 
     while (y1 - y2).max() < eps/2:
         dt *= 2
-        y1 = nsteps(x, y, t, dx, dt, k, q, 1, sf)
+        y1 = nsteps(x, y + noise, t, dx, dt, k, q, 1, sf)
         y2 = nsteps(x, y, t, dx, dt, k, q, 2, sf)
 
     while (y1 - y2).max() >= eps or not numpy.isfinite(y2).all():
         dt /= 2
-        y1 = nsteps(x, y, t, dx, dt, k, q, 1, sf)
+        y1 = nsteps(x, y + 2*noise, t, dx, dt, k, q, 1, sf)
         y2 = nsteps(x, y, t, dx, dt, k, q, 2, sf)
 
     return dt/2, y2
 
 
-def main(tp='exp', n=10**2, nt=10**9):
+def main(tp='exp', n=10**2, nt=10**9, sleep_time=0.01):
     if tp == 'exp':
         sf = exp_step
     elif tp == 'lin':
@@ -89,18 +118,22 @@ def main(tp='exp', n=10**2, nt=10**9):
     else:
         raise Exception
 
-    k = lambda y:      y**2.0 #u*0 + 1
-    q = lambda y: 30 * y**3.0 #0*u
+    k = lambda y: y*0 + 1
+    q = lambda y: 0*y
+
+    k = lambda y:     y**2.0
+    q = lambda y: 30* y**3.0
+
     x = numpy.linspace(0, 1, n)
     y = (x < 0.6) * (x > 0.4) * 15.
 
     dx = 1/n
-    dt = 1e-4 * dx*dx
+    dt = 1e-4 * dx*dx#1e-4 * dx*dx
 
     lst = y
     t = 0
 
-    dt_hist = [0]
+    dt_hist = [dt]
 
     plt.ion()
     figure, ax = plt.subplots(figsize=(16,9))
@@ -112,6 +145,7 @@ def main(tp='exp', n=10**2, nt=10**9):
     figure.canvas.draw()
     figure.canvas.flush_events()
 
+    peak_dt = dt
     for i in range(nt):
         if not plt.fignum_exists(figure.number):
             break
@@ -120,8 +154,9 @@ def main(tp='exp', n=10**2, nt=10**9):
         t += dt
         dt_hist.append(dt)
 
-        plt.title('t={} dt={}'.format(round(t, 13), dt))
-        time.sleep(0.3)
+        peak_dt = max(peak_dt, dt)
+        plt.title('t={} peak_dt={} dt={}'.format(round(t, 13), round(peak_dt, 10), dt))
+        time.sleep(sleep_time)
 
         line1.set_ydata(lst)
         ax.set_ylim(lst.min(), lst.max() * 1.1)
@@ -135,6 +170,13 @@ def main(tp='exp', n=10**2, nt=10**9):
 
 
 if __name__ == '__main__':
-    main('exp')
+    from sys import argv
+    tp = 'exp'
+    sleep_time = 0.01
+    if len(argv) > 1:
+        tp = argv[1]
+        if len(argv) > 2:
+            sleep_time = float(argv[2])
+    main(tp, sleep_time=sleep_time)
 
 raise SystemExit
