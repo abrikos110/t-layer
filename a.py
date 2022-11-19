@@ -1,4 +1,6 @@
 import numpy
+import numpy as np
+from numpy import sqrt, cos, pi, exp, sin
 import matplotlib.pyplot as plt
 import time
 
@@ -9,7 +11,7 @@ def exponent(linear_operator, t, u, eps=1e-9):
     ans = 0
     i = 0
     f = 1
-    for i in range(32):#while abs((ans + x) - ans).max() > eps:
+    for i in range(52):#while abs((ans + x) - ans).max() > eps:
         ans += x
         i += 1
         xx = linear_operator(x) * t / i
@@ -76,11 +78,15 @@ def step(x, y, t, dx, dt, k, q):
 
     return ans
 
+def estep(x, t, dx, dt, ykq, k, q):
+    y = step(x, ykq[0], t, dx, dt, ykq[1], ykq[2])
+    return y, k(y), q(y)
 def exp_step(x, y, t, dx, dt, k, q):
     K = k(y)
     Q = q(y)
-    ee = exponent(lambda y: step(x, y, t, dx, 1, K, Q) - y, dt, y)
-    return ee
+    ee = exponent(lambda ykq: estep(x, t, dx, dt, ykq, k, q) - ykq, 1, np.array([y, K, Q]))
+#    ee = exponent(lambda y: step(x, y, t, dx, dt, K, Q) - y, 1, y)
+    return ee[0]
 
 def nsteps(x, y, t, dx, dt, k, q, n, sf):
     ans = y.copy()
@@ -89,21 +95,22 @@ def nsteps(x, y, t, dx, dt, k, q, n, sf):
     return ans
 
 def runge_rule(x, y, t, dx, dt, k, q, eps, sf):
-    noise = numpy.random.rand(*y.shape) * eps / 2
-    y1 = nsteps(x, y + noise, t, dx, dt, k, q, 1, sf)
-    y2 = nsteps(x, y, t, dx, dt, k, q, 2, sf)
+    noises = [abs(numpy.random.rand(*y.shape)) * eps * 0.1 for i in range(2)]
+    y1 = nsteps(x, y + noises[0], t, dx, dt, k, q, 1, sf)
+    y2 = nsteps(x, y + noises[1], t, dx, dt, k, q, 2, sf)
 
-    while (y1 - y2).max() < eps/2 and dt < 1:
+    while 0 and abs(y1 - y2).max() < eps/2 and dt < 0.001:
         dt *= 2
-        y1 = nsteps(x, y + noise, t, dx, dt, k, q, 1, sf)
-        y2 = nsteps(x, y, t, dx, dt, k, q, 2, sf)
+        y1 = nsteps(x, y + noises[0], t, dx, dt, k, q, 1, sf)
+        y2 = nsteps(x, y + noises[1], t, dx, dt, k, q, 2, sf)
 
-    while ((y1 - y2).max() >= eps or not numpy.isfinite(y2).all()) and dt > 0:
+    while (abs(y1 - y2).max() >= eps or not numpy.isfinite(y2).all()) and dt > 0:
         dt /= 2
-        y1 = nsteps(x, y + 2*noise, t, dx, dt, k, q, 1, sf)
-        y2 = nsteps(x, y, t, dx, dt, k, q, 2, sf)
+        y1 = nsteps(x, y + noises[0], t, dx, dt, k, q, 1, sf)
+        y2 = nsteps(x, y + noises[1], t, dx, dt, k, q, 2, sf)
 
-    return dt/2, y2
+    y2 = nsteps(x, y, t, dx, dt, k, q, 1, sf)
+    return dt, y2
 
 
 def main(tp='exp', n=10**2, nt=10**9, sleep_time=0.01):
@@ -118,15 +125,32 @@ def main(tp='exp', n=10**2, nt=10**9, sleep_time=0.01):
 
     k = lambda y: y*0 + 1
     q = lambda y: 0*y
+    exact = lambda x, t: sin(x) * exp(-t)
 
-    k = lambda y:     y**2.0
-    q = lambda y: 30* y**3.0
+    if 1:
+        sigma = 1.0
+        beta = sigma + 1
 
-    x = numpy.linspace(0, 1, n)
-    y = (x < 0.6) * (x > 0.4) * 15.
+        q0 = 10
+        q = lambda y: q0* y**beta
+        k0 = (sigma ** 2 * q0 / (sigma + 1)) / np.pi ** 2
+        k = lambda y: k0 * y**sigma
 
-    dx = 1/n
-    dt = 1e-4 * dx*dx#1e-4 * dx*dx
+        L_T = 2 * pi * sqrt(k0 / q0) * sqrt((sigma + 1) / (sigma*sigma))
+        def exact(x, t, tf=0.05):
+            x = x-pi/2
+            coef = 2 * (sigma + 1) / (sigma*(sigma + 2))
+            cosin = cos((pi * x) / L_T) ** 2
+            ans = (q0 * (tf - t)) ** (-1./sigma) * (coef * cosin) ** (1./sigma)
+            ans[abs(x) > L_T/2] = 0
+            return ans
+
+    x = numpy.linspace(0, pi, n)
+    y = exact(x, 0)
+    y0 = y.copy()
+
+    dx = x[1] - x[0]
+    dt = 0.4 * dx * dx
 
     lst = y
     t = 0
@@ -135,33 +159,41 @@ def main(tp='exp', n=10**2, nt=10**9, sleep_time=0.01):
 
     plt.ion()
     figure, ax = plt.subplots(figsize=(16,9))
-    line1, = ax.plot(x, y, label=tp)
-    line2, = ax.plot(dt_hist, label='dt')
+    lines = [ax.plot(x, y, label=tp)[0],
+             ax.plot(dt_hist, label='dt')[0],
+             ax.plot(x, exact(x, t), label="exact", linewidth=5.0, alpha=0.5)[0],
+             ax.plot(x, y0, label='y0')[0]]
+    data = [(lambda: x, lambda: lst),
+            (lambda: np.linspace(0,1,len(dt_hist)),
+             lambda: np.array(dt_hist) / max(dt_hist) * lst.max() * 0.9),
+            (lambda: x, lambda: exact(x, t)),
+            (lambda: x, lambda: y0)]
 
     plt.legend()
     figure.canvas.flush_events()
     figure.canvas.draw()
     figure.canvas.flush_events()
+    time.sleep(1)
 
     peak_dt = dt
     for i in range(nt):
+        print(t, abs(lst[len(y)//2] - exact(x[len(y)//2:][:1], t)[0]))
         if not plt.fignum_exists(figure.number):
             break
-        dt, a = runge_rule(x, lst, t, dx, dt, k, q, eps=dt * 1e6, sf=sf)
+        dt, a = runge_rule(x, lst, t, dx, dt, k, q, eps=1e-3, sf=sf)
         lst = a
         t += dt
         dt_hist.append(dt)
 
         peak_dt = max(peak_dt, dt)
         plt.title('t={} peak_dt={} dt={}'.format(round(t, 13), round(peak_dt, 10), dt))
-        time.sleep(sleep_time)
+#time.sleep(sleep_time)
 
-        line1.set_ydata(lst)
-        ax.set_ylim(lst.min(), lst.max() * 1.1)
+        ax.set_ylim(lst.min(), max(1, lst.max()) * 1.05)
 
-        dh = numpy.array(dt_hist)
-        line2.set_xdata(numpy.linspace(0, 1, dh.shape[0]))
-        line2.set_ydata(dh / dh.max() * lst.max() * 0.9)
+        for i in range(len(lines)):
+            lines[i].set_xdata(data[i][0]())
+            lines[i].set_ydata(data[i][1]())
 
         figure.canvas.draw()
         figure.canvas.flush_events()
