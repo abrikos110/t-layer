@@ -11,7 +11,7 @@ def exponent(linear_operator, t, u, eps=1e-9):
     ans = 0
     i = 0
     f = 1
-    for i in range(52):#while abs((ans + x) - ans).max() > eps:
+    for i in range(22):#while abs((ans + x) - ans).max() > eps:
         ans += x
         i += 1
         xx = linear_operator(x) * t / i
@@ -57,14 +57,22 @@ def implicit_step(x, y, t, dx, dt, k, q):
 
     return y
 
+def iter_imp_step(x, y, t, dx, dt, k, q):
+    ans = y.copy()
+
+    for i in range(9):
+        ans = implicit_step(x, y, t, dx, dt, k(ans), q(ans))
+
+    ans = implicit_step(x, y, t, dx, dt, (k(ans) + k(y))/2, (q(ans)+q(y))/2)
+
+    return ans
+
 def step(x, y, t, dx, dt, k, q):
     ''' u'_t = div(k(u) grad u) + q(u) = (k(u) u'_x)'_x'''
-    Q = q
-    K = k
-    if callable(q): Q = q(y)
-    if callable(k): K = k(y)
+    from numpy import roll as R
 
-    R = numpy.roll
+    Q = q(y) if callable(q) else q
+    K = k(y) if callable(k) else k
 
     ans = y.copy()
     d2 = (R(K, -1) + K) / 2 * (R(y, -1) - y) - (K + R(K, 1)) / 2 * (y - R(y, 1))
@@ -78,38 +86,60 @@ def step(x, y, t, dx, dt, k, q):
 
     return ans
 
-def estep(x, t, dx, dt, ykq, k, q):
-    y = step(x, ykq[0], t, dx, dt, ykq[1], ykq[2])
-    return y, k(y), q(y)
+def superstep(x, y, t, dx, dt, k, q, k_diff, q_diff):
+    from numpy import roll as R
+
+    Q = q(y) if callable(q) else q
+    K = k(y) if callable(k) else k
+    QD = q_diff(y) if callable(q_diff) else q_diff
+    KD = k_diff(y) if callable(k_diff) else k_diff
+    f = lambda c, u: (R(c,-1)+c)/2 * (R(u,-1)-u) - (R(c,1)+c)/2 * (u-R(u,1))
+
+    ans = y.copy()
+    d1 = f(K, y) / (dx*dx) + Q
+    d1[0] = d1[-1] = 0
+
+    d2 = QD * d1 + (f(KD * d1, y) + f(K, d1)) / (dx*dx)
+
+    ans += dt * d1 + dt**2/2 * d2
+    ans[0] = ans[-1] = 0
+
+    return ans
+
+def estep(x, t, dx, dt, ykqdd, k, q):
+    ans = step(x, ykqdd[0], t, dx, dt, ykqdd[1], ykqdd[2])
+    return ans, k(ans), q(ans)
 def exp_step(x, y, t, dx, dt, k, q):
     K = k(y)
     Q = q(y)
     ee = exponent(lambda ykq: estep(x, t, dx, dt, ykq, k, q) - ykq, 1, np.array([y, K, Q]))
-#    ee = exponent(lambda y: step(x, y, t, dx, dt, K, Q) - y, 1, y)
     return ee[0]
 
-def nsteps(x, y, t, dx, dt, k, q, n, sf):
+def nsteps(x, y, t, dx, dt, k, q, n, sf, k_diff=None, q_diff=None):
     ans = y.copy()
     for i in range(n):
-        ans = sf(x, ans, t+i*dt/n, dx, dt/n, k, q)
+        if sf == superstep:
+            ans = sf(x, ans, t+i*dt/n, dx, dt/n, k, q, k_diff, q_diff)
+        else:
+            ans = sf(x, ans, t+i*dt/n, dx, dt/n, k, q)
     return ans
 
-def runge_rule(x, y, t, dx, dt, k, q, eps, sf):
+def runge_rule(x, y, t, dx, dt, k, q, eps, sf, k_diff=None, q_diff=None):
     noises = [abs(numpy.random.rand(*y.shape)) * eps * 0.1 for i in range(2)]
-    y1 = nsteps(x, y + noises[0], t, dx, dt, k, q, 1, sf)
-    y2 = nsteps(x, y + noises[1], t, dx, dt, k, q, 2, sf)
+    y1 = nsteps(x, y + noises[0], t, dx, dt, k, q, 1, sf, k_diff=k_diff, q_diff=q_diff)
+    y2 = nsteps(x, y + noises[1], t, dx, dt, k, q, 2, sf, k_diff=k_diff, q_diff=q_diff)
 
     while 0 and abs(y1 - y2).max() < eps/2 and dt < 0.001:
         dt *= 2
-        y1 = nsteps(x, y + noises[0], t, dx, dt, k, q, 1, sf)
-        y2 = nsteps(x, y + noises[1], t, dx, dt, k, q, 2, sf)
+        y1 = nsteps(x, y + noises[0], t, dx, dt, k, q, 1, sf, k_diff=k_diff, q_diff=q_diff)
+        y2 = nsteps(x, y + noises[1], t, dx, dt, k, q, 2, sf, k_diff=k_diff, q_diff=q_diff)
 
     while (abs(y1 - y2).max() >= eps or not numpy.isfinite(y2).all()) and dt > 0:
         dt /= 2
-        y1 = nsteps(x, y + noises[0], t, dx, dt, k, q, 1, sf)
-        y2 = nsteps(x, y + noises[1], t, dx, dt, k, q, 2, sf)
+        y1 = nsteps(x, y + noises[0], t, dx, dt, k, q, 1, sf, k_diff=k_diff, q_diff=q_diff)
+        y2 = nsteps(x, y + noises[1], t, dx, dt, k, q, 2, sf, k_diff=k_diff, q_diff=q_diff)
 
-    y2 = nsteps(x, y, t, dx, dt, k, q, 1, sf)
+    y2 = nsteps(x, y, t, dx, dt, k, q, 1, sf, k_diff=k_diff, q_diff=q_diff)
     return dt, y2
 
 
@@ -120,11 +150,16 @@ def main(tp='exp', n=10**2, nt=10**9, sleep_time=0.01):
         sf = step
     elif tp == 'imp':
         sf = implicit_step
+    elif tp == 'superstep':
+        sf = superstep
+    elif tp == 'iter':
+        sf = iter_imp_step
     else:
         raise Exception
 
     k = lambda y: y*0 + 1
     q = lambda y: 0*y
+    k_diff = q_diff = lambda y: 0*y
     exact = lambda x, t: sin(x) * exp(-t)
 
     if 1:
@@ -132,9 +167,11 @@ def main(tp='exp', n=10**2, nt=10**9, sleep_time=0.01):
         beta = sigma + 1
 
         q0 = 10
-        q = lambda y: q0* y**beta
         k0 = (sigma ** 2 * q0 / (sigma + 1)) / np.pi ** 2
+        q = lambda y: q0 * y**beta
+        q_diff = lambda y: q0 * beta * y**(beta-1)
         k = lambda y: k0 * y**sigma
+        k_diff = lambda y: k0 * sigma * y**(sigma-1)
 
         L_T = 2 * pi * sqrt(k0 / q0) * sqrt((sigma + 1) / (sigma*sigma))
         def exact(x, t, tf=0.05):
@@ -180,7 +217,7 @@ def main(tp='exp', n=10**2, nt=10**9, sleep_time=0.01):
         print(t, abs(lst[len(y)//2] - exact(x[len(y)//2:][:1], t)[0]))
         if not plt.fignum_exists(figure.number):
             break
-        dt, a = runge_rule(x, lst, t, dx, dt, k, q, eps=1e-3, sf=sf)
+        dt, a = runge_rule(x, lst, t, dx, dt, k, q, k_diff=k_diff, q_diff=q_diff, eps=1e-3, sf=sf)
         lst = a
         t += dt
         dt_hist.append(dt)
