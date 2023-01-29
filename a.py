@@ -5,6 +5,11 @@ import matplotlib.pyplot as plt
 import time
 
 
+def int_RE(A, p, n=1): # p, p+1
+    q = p+1
+    t_n = (p/q) ** n
+    return (t_n * A(p) - A(q)) / (t_n - 1)
+
 def exponent(linear_operator, t, u, eps=1e-9):
     ''' exp(A, t, u) = exp(A t) @ u '''
     x = u
@@ -67,7 +72,7 @@ def iter_imp_step(x, y, t, dx, dt, k, q):
 
     return ans
 
-def step(x, y, t, dx, dt, k, q):
+def step(x, y, t, dx, dt, k, q, H=1):
     ''' u'_t = div(k(u) grad u) + q(u) = (k(u) u'_x)'_x'''
     from numpy import roll as R
 
@@ -75,16 +80,30 @@ def step(x, y, t, dx, dt, k, q):
     K = k(y) if callable(k) else k
 
     ans = y.copy()
-    d2 = (R(K, -1) + K) / 2 * (R(y, -1) - y) - (K + R(K, 1)) / 2 * (y - R(y, 1))
-    d2 /= dx*dx
-    d2[0] = d2[-1] = 0
+    d2 = (R(K, -H) + K) / 2 * (R(y, -H) - y) - (K + R(K, H)) / 2 * (y - R(y, H))
+    d2 /= dx*dx * H*H
+    d2[:H] = d2[-H-1:] = 0
 
+#print(abs(d2).mean(), abs(Q).mean(), "norms")
     ans += dt * (d2 + Q)
 #ans[0], ans[-1] = y[0], y[-1]
 #ans[0], ans[-1] = ans[1], ans[-2] # first order
-    ans[0] = ans[-1] = 0
+    ans[:H] = ans[-H-1:] = 0
 
     return ans
+
+
+def dd(x):
+    ans = np.zeros(len(x) * 2 - 1)
+    ans[::2] = x
+    ans[1::2] = (np.roll(x, -1) + x)[:-1] / 2
+    return ans
+def re_step(x, y, t, dx, dt, k, q):
+    f = lambda n: nsteps(x, y, t, dx, dt, k, q, n, implicit_step)
+    f2 = lambda n: int_RE(f, n, 1)
+    f3 = lambda n: int_RE(f2, n, 2)
+    f4 = lambda n: int_RE(f3, n, 3)
+    return f4(1)
 
 def superstep(x, y, t, dx, dt, k, q, k_diff, q_diff):
     from numpy import roll as R
@@ -129,7 +148,7 @@ def runge_rule(x, y, t, dx, dt, k, q, eps, sf, k_diff=None, q_diff=None):
     y1 = nsteps(x, y + noises[0], t, dx, dt, k, q, 1, sf, k_diff=k_diff, q_diff=q_diff)
     y2 = nsteps(x, y + noises[1], t, dx, dt, k, q, 2, sf, k_diff=k_diff, q_diff=q_diff)
 
-    while 0 and abs(y1 - y2).max() < eps/2 and dt < 0.001:
+    while 1 and abs(y1 - y2).max() < eps/2 and dt < 0.001:
         dt *= 2
         y1 = nsteps(x, y + noises[0], t, dx, dt, k, q, 1, sf, k_diff=k_diff, q_diff=q_diff)
         y2 = nsteps(x, y + noises[1], t, dx, dt, k, q, 2, sf, k_diff=k_diff, q_diff=q_diff)
@@ -143,7 +162,7 @@ def runge_rule(x, y, t, dx, dt, k, q, eps, sf, k_diff=None, q_diff=None):
     return dt, y2
 
 
-def main(tp='exp', n=10**2, nt=10**9, sleep_time=0.01):
+def main(tp='exp', n=51, nt=10**9, sleep_time=0.01):
     if tp == 'exp':
         sf = exp_step
     elif tp == 'lin':
@@ -154,6 +173,8 @@ def main(tp='exp', n=10**2, nt=10**9, sleep_time=0.01):
         sf = superstep
     elif tp == 'iter':
         sf = iter_imp_step
+    elif tp == 're_step':
+        sf = re_step
     else:
         raise Exception
 
@@ -182,51 +203,74 @@ def main(tp='exp', n=10**2, nt=10**9, sleep_time=0.01):
             ans[abs(x) > L_T/2] = 0
             return ans
 
-    x = numpy.linspace(0, pi, n)
-    y = exact(x, 0)
-    y0 = y.copy()
+    x = [numpy.linspace(0, pi, n)]
+    x.append(dd(x[-1]))
+    x.append(dd(x[-1]))
 
-    dx = x[1] - x[0]
-    dt = 0.4 * dx * dx
+    y = [exact(X, 0) for X in x]
+    y0 = [y.copy() for y in y]
+
+    dt = 0.1 * (x[-1][1] - x[-1][0]) ** 2
 
     lst = y
     t = 0
 
     dt_hist = [dt]
 
+    def gg(x, y):
+        y2 = step(x, y, t, x[1]-x[0], dt, k, q)
+        y2 = step(x, y, t+dt, x[1]-x[0], -dt, k, q)
+        err = abs(y - y2)
+        return err / dt / 50
     plt.ion()
     figure, ax = plt.subplots(figsize=(16,9))
-    lines = [ax.plot(x, y, label=tp)[0],
+    lines = [ax.plot(x[0], y[0], label=tp)[0],
+             ax.plot(x[0], y[0], label=tp+'1')[0],
+             ax.plot(x[0], y[0], label=tp+'2')[0],
              ax.plot(dt_hist, label='dt')[0],
-             ax.plot(x, exact(x, t), label="exact", linewidth=5.0, alpha=0.5)[0],
-             ax.plot(x, y0, label='y0')[0]]
-    data = [(lambda: x, lambda: lst),
+             ax.plot(x[0], exact(x[0], t), label="exact", linewidth=5.0, alpha=0.5)[0],
+             ax.plot(x[0], y0[0], label='y0')[0],
+             ax.plot(x[0], gg(x[0], y0[0]), label='err')[0]]
+    ff = lambda n: lst[n-1][::2**(n-1)]
+    ff2 = lambda n: int_RE(ff, n, 2)
+    data = [(lambda: x[0], lambda: int_RE(ff2, 1, 3)),#(4*lst[1][::2] - lst[0]) / (4-1)),
+            (lambda: x[0], lambda: lst[0]),
+            (lambda: x[1], lambda: lst[1]),
             (lambda: np.linspace(0,1,len(dt_hist)),
-             lambda: np.array(dt_hist) / max(dt_hist) * lst.max() * 0.9),
-            (lambda: x, lambda: exact(x, t)),
-            (lambda: x, lambda: y0)]
+             lambda: np.array(dt_hist) / max(dt_hist) * lst[0].max() * 0.9),
+            (lambda: x[0], lambda: exact(x[0], t)),
+            (lambda: x[0], lambda: y0[0]),
+            (lambda: x[0], lambda: gg(x[0], lst[0]))]
 
     plt.legend()
     figure.canvas.flush_events()
     figure.canvas.draw()
     figure.canvas.flush_events()
-    time.sleep(1)
+    time.sleep(3)
 
     peak_dt = dt
     for i in range(nt):
-        print(t, abs(lst[len(y)//2] - exact(x[len(y)//2:][:1], t)[0]))
+        print(t, abs(data[0][1]()[len(y[0])//2] - exact(x[0][len(y[0])//2:][:1], t)[0]))
         if not plt.fignum_exists(figure.number):
             break
-        dt, a = runge_rule(x, lst, t, dx, dt, k, q, k_diff=k_diff, q_diff=q_diff, eps=1e-3, sf=sf)
-        lst = a
+        dt2, a = runge_rule(x[-1], lst[-1], t, x[-1][1] - x[-1][0], dt, k, q, k_diff=k_diff, q_diff=q_diff, eps=1e-3, sf=sf)
+
+        dt2 /= 2
+        for i in range(len(lst)):
+            lst[i] = sf(x[i], lst[i], t, x[i][1] - x[i][0], dt2, k, q)
+
+        #lst = (4*lst2[::2] - lst) / (4-1)
+
+        dt = dt2
+
         t += dt
         dt_hist.append(dt)
 
         peak_dt = max(peak_dt, dt)
         plt.title('t={} peak_dt={} dt={}'.format(round(t, 13), round(peak_dt, 10), dt))
-#time.sleep(sleep_time)
+        time.sleep(sleep_time)
 
-        ax.set_ylim(lst.min(), max(1, lst.max()) * 1.05)
+        ax.set_ylim(lst[-1].min(), max(1, lst[-1].max()) * 1.05)
 
         for i in range(len(lines)):
             lines[i].set_xdata(data[i][0]())
