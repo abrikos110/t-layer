@@ -1,7 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
-files = ['imp.log', 'lin.log', 'exp.log', 'superstep.log', 'iter.log', 're_step.log', 're_step_ultra.log']
+files = ['imp.log', 'lin.log', 'exp.log', 'superstep.log', 'iter.log', 're_step.log', 're_step_ultra.log', 'true_exp.log', 're_exp.log']
 data = []
 
 for f in files:

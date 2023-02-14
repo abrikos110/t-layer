@@ -16,7 +16,7 @@ def exponent(linear_operator, t, u, eps=1e-9):
     ans = 0
     i = 0
     f = 1
-    for i in range(22):#while abs((ans + x) - ans).max() > eps:
+    for i in range(12):#while abs((ans + x) - ans).max() > eps:
         ans += x
         i += 1
         xx = linear_operator(x) * t / i
@@ -99,11 +99,11 @@ def dd(x):
     ans[1::2] = (np.roll(x, -1) + x)[:-1] / 2
     return ans
 def re_step(x, y, t, dx, dt, k, q):
-    f = lambda n: nsteps(x, y, t, dx, dt, k, q, n, implicit_step)
-    f2 = lambda n: int_RE(f, n, 1)
-    f3 = lambda n: int_RE(f2, n, 2)
-    f4 = lambda n: int_RE(f3, n, 3)
-    return f4(1)
+    f = lambda n: nsteps(x, y, t, dx, dt, k, q, n, exp_step)
+    f2 = lambda n: int_RE(f, n, 2)
+#f3 = lambda n: int_RE(f2, n, 3)
+#f4 = lambda n: int_RE(f3, n, 3)
+    return f2(1)
 
 def superstep(x, y, t, dx, dt, k, q, k_diff, q_diff):
     from numpy import roll as R
@@ -126,12 +126,13 @@ def superstep(x, y, t, dx, dt, k, q, k_diff, q_diff):
     return ans
 
 def estep(x, t, dx, dt, ykqdd, k, q):
-    ans = step(x, ykqdd[0], t, dx, dt, ykqdd[1], ykqdd[2])
+    ans = step(x, ykqdd[0], t, dx, dt, ykqdd[1], ykqdd[2]) # test implicit_step
     return ans, k(ans), q(ans)
 def exp_step(x, y, t, dx, dt, k, q):
     K = k(y)
     Q = q(y)
-    ee = exponent(lambda ykq: estep(x, t, dx, dt, ykq, k, q) - ykq, 1, np.array([y, K, Q]))
+    tst = numpy.log(1+dt)
+    ee = exponent(lambda ykq: estep(x, t, dx, tst, ykq, k, q) - ykq, 1, np.array([y, K, Q]))
     return ee[0]
 
 def nsteps(x, y, t, dx, dt, k, q, n, sf, k_diff=None, q_diff=None):
@@ -204,8 +205,8 @@ def main(tp='exp', n=51, nt=10**9, sleep_time=0.01):
             return ans
 
     x = [numpy.linspace(0, pi, n)]
-    x.append(dd(x[-1]))
-    x.append(dd(x[-1]))
+#x.append(dd(x[-1]))
+#x.append(dd(x[-1]))
 
     y = [exact(X, 0) for X in x]
     y0 = [y.copy() for y in y]
@@ -225,17 +226,17 @@ def main(tp='exp', n=51, nt=10**9, sleep_time=0.01):
     plt.ion()
     figure, ax = plt.subplots(figsize=(16,9))
     lines = [ax.plot(x[0], y[0], label=tp)[0],
-             ax.plot(x[0], y[0], label=tp+'1')[0],
-             ax.plot(x[0], y[0], label=tp+'2')[0],
+#             ax.plot(x[0], y[0], label=tp+'1')[0],
+#             ax.plot(x[0], y[0], label=tp+'2')[0],
              ax.plot(dt_hist, label='dt')[0],
              ax.plot(x[0], exact(x[0], t), label="exact", linewidth=5.0, alpha=0.5)[0],
              ax.plot(x[0], y0[0], label='y0')[0],
              ax.plot(x[0], gg(x[0], y0[0]), label='err')[0]]
     ff = lambda n: lst[n-1][::2**(n-1)]
     ff2 = lambda n: int_RE(ff, n, 2)
-    data = [(lambda: x[0], lambda: int_RE(ff2, 1, 3)),#(4*lst[1][::2] - lst[0]) / (4-1)),
-            (lambda: x[0], lambda: lst[0]),
-            (lambda: x[1], lambda: lst[1]),
+    data = [(lambda: x[0], lambda: lst[0]),#int_RE(ff2, 1, 3)),#(4*lst[1][::2] - lst[0]) / (4-1)),
+#            (lambda: x[0], lambda: lst[0]),
+#            (lambda: x[1], lambda: lst[1]),
             (lambda: np.linspace(0,1,len(dt_hist)),
              lambda: np.array(dt_hist) / max(dt_hist) * lst[0].max() * 0.9),
             (lambda: x[0], lambda: exact(x[0], t)),
